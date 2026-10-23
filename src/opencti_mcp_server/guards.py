@@ -211,6 +211,15 @@ class Lookup:
         return self.search is not None
 
 
+def canonical_ip(value: str) -> str:
+    """An IP address in one form whatever the Python version: compressed IPv6, and an IPv4-mapped
+    IPv6 address as `::ffff:a.b.c.d` (Python 3.13 changed how `compressed` writes those)."""
+    ip = ipaddress.ip_address(value)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return f"::ffff:{ip.ipv4_mapped}"
+    return ip.compressed
+
+
 def observable_lookup(value: Any, kind: Any) -> Lookup:
     """Validate a value to look up and build its exact-match filter.
 
@@ -234,7 +243,7 @@ def observable_lookup(value: Any, kind: Any) -> Lookup:
     elif kind in ("md5", "sha1", "sha256", "sha512"):
         value = value.lower()
     elif kind in ("ipv4", "ipv6"):
-        value = ipaddress.ip_address(value).compressed
+        value = canonical_ip(value)
     types, key = _KINDS[kind]
     if detected and kind == "domain":
         types = ["Domain-Name", "Hostname"]
