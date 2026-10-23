@@ -1,0 +1,13 @@
+opencti-mcp-server
+Copyright SOCFortress
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+tests/schema/ vendors OpenCTI's GraphQL schema definition files (SDL) for the contract tests:
+opencti-platform/opencti-graphql/config/schema/opencti.graphql (as 000-main.graphql) and the
+module schemas under opencti-platform/opencti-graphql/src/modules/, from OpenCTI 6.9.29 and
+7.261023.1 (https://github.com/OpenCTI-Platform/opencti), Copyright Filigran, licensed under the
+Apache License, Version 2.0. In the module files, `type Query` and `type Mutation` are rewritten to
+`extend type Query` and `extend type Mutation` so that the files merge into one schema; they are
+otherwise unchanged. The schema files are used by the tests only and are not part of the package
+or the container image.
