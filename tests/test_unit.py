@@ -1029,6 +1029,18 @@ async def test_author_above_the_ceiling_is_dropped(octi, mcp):
     out = await call(mcp, "search_indicators", {"search": "x"})
     assert [i.get("created_by") for i in out["indicators"]] == [None, None, "Example Feed"]
     assert "Secret Source" not in json.dumps(out) and out["withheld"] == 0
+    assert [i.get("created_by_markings") for i in out["indicators"]] == [None, None, []]
+
+
+async def test_the_authors_own_markings_are_returned(octi, mcp):
+    from fakes import MARKINGS
+
+    amber_author = indicator(createdBy={"name": "Partner Feed", "objectMarking": [MARKINGS["TLP:AMBER"]]})
+    octi.responses["SearchIndicators"] = {"data": {"indicators": conn([amber_author])}}
+    out = await call(mcp, "search_indicators", {"search": "x"})
+    (ind,) = out["indicators"]
+    assert ind["created_by"] == "Partner Feed" and ind["created_by_markings"] == ["TLP:AMBER"]
+    assert ind["markings"] == ["TLP:CLEAR"]
 
 
 async def test_relations_with_missing_or_unmarked_ends_are_withheld(octi, mcp):
