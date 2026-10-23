@@ -70,12 +70,16 @@ class OpenCTIClient:
         try:
             body = resp.json()
         except ValueError:
-            raise ToolError(f"opencti error: non-JSON response (HTTP {resp.status_code})") from None
-        if not isinstance(body, dict):
-            raise ToolError(f"opencti error: unexpected response (HTTP {resp.status_code})")
-        errors = body.get("errors")
+            body = None
+        errors = body.get("errors") if isinstance(body, dict) else None
         if errors:
             raise self._graphql_error(errors)
+        if resp.status_code in (401, 403):
+            raise ToolError(f"opencti refused the request: HTTP {resp.status_code}")
+        if body is None:
+            raise ToolError(f"opencti error: non-JSON response (HTTP {resp.status_code})")
+        if not isinstance(body, dict):
+            raise ToolError(f"opencti error: unexpected response (HTTP {resp.status_code})")
         if resp.status_code != 200:
             raise ToolError(f"opencti error: HTTP {resp.status_code}")
         data = body.get("data")
@@ -87,9 +91,11 @@ class OpenCTIClient:
         first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
         ext = first.get("extensions") if isinstance(first.get("extensions"), dict) else {}
         code = str(ext.get("code") or first.get("name") or "UNKNOWN")[:64]
-        message = clean(first.get("message") or "no message", 300) or ""
+        raw = str(first.get("message") or "no message")
         if self._token:
-            message = message.replace(self._token, "[redacted]")
+            # Redact before cleaning and capping, so a token cut by the cap cannot leak in part.
+            raw = raw.replace(self._token, "[redacted]")
+        message = clean(raw, 300) or ""
         more = len(errors) - 1 if isinstance(errors, list) else 0
         detail = f"{message} ({clean(code, 64)}{f', +{more} more' if more > 0 else ''})"
         log.warning("opencti returned an error: %s", code)

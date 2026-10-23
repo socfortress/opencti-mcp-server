@@ -233,3 +233,17 @@ async def test_tlp_withholding_on_real_data(live):
     for e in counted["stixCyberObservables"]["edges"]:
         out = await call(mcp, "get_observable", {"id": e["node"]["id"]})
         assert out["observable"] is None and out["withheld"] == 1
+
+
+async def test_long_value_falls_back_to_fuzzy_search(live):
+    """A synthetic URL over OpenCTI's 512-character exact-match limit: the fuzzy fallback runs cleanly."""
+    mcp, _ = live
+    url = "https://long-value.example.invalid/" + "a" * 600 + "?x=~y*z"
+    out = await call(mcp, "lookup_observable", {"value": url})
+    assert isinstance(out, dict), out
+    assert out["match"].startswith("fuzzy")
+    print(f"\nlive fuzzy lookup: total={out.get('total')} returned={out['returned']}")
+    out = await call(mcp, "search_indicators", {"value": url})
+    assert isinstance(out, dict), out
+    assert out["match"].startswith("fuzzy")
+    print(f"live fuzzy search_indicators: total={out.get('total')} returned={out['returned']}")

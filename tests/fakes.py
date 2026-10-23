@@ -17,7 +17,7 @@ from opencti_mcp_server.client import OpenCTIClient
 from opencti_mcp_server.config import Settings
 
 TOKEN = "octi-test-token-5f2b7c1e-do-not-leak"
-MCP_TOKEN = "mcp-test-token-91c3"
+MCP_TOKEN = "mcp-test-token-91c3-0123456789abcdef0123"
 
 MARKINGS = {
     "TLP:CLEAR": {"definition_type": "TLP", "definition": "TLP:CLEAR", "x_opencti_order": 1},
@@ -64,7 +64,7 @@ def _meta(entity_type: str, markings: tuple[str, ...] = (), labels: tuple[str, .
         "entity_type": entity_type,
         "created_at": "2026-01-02T03:04:05.000Z",
         "updated_at": "2026-02-03T04:05:06.000Z",
-        "createdBy": {"name": "Example Feed"},
+        "createdBy": {"name": "Example Feed", "objectMarking": []},
         "objectLabel": [{"value": v} for v in labels],
         "objectMarking": [MARKINGS[m] for m in markings],
     }

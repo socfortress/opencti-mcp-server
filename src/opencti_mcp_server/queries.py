@@ -4,8 +4,9 @@ Every caller-supplied value travels as a GraphQL variable; nothing is ever splic
 All documents are queries (no mutations or subscriptions), and `tests/test_contract.py` validates
 each one against the vendored OpenCTI 6.9 and 7.x schemas.
 
-Every node that can carry a marking asks for `objectMarking`, nested ones included, so the TLP
-guard can withhold it.
+Every node that can carry a marking asks for `objectMarking`, nested ones included (authors and
+relationship ends too), so the TLP guard can withhold it. The guard fails closed on a node that
+lacks the key.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ MARKINGS = "objectMarking { definition_type definition x_opencti_order }"
 _META = f"""
 fragment Meta on StixCoreObject {{
   id standard_id entity_type created_at updated_at
-  createdBy {{ name }}
+  createdBy {{ name {MARKINGS} }}
   objectLabel {{ value }}
   {MARKINGS}
 }}
@@ -35,7 +36,8 @@ _OBS = """
 fragment Obs on StixCyberObservable {
   ...Meta
   observable_value x_opencti_score x_opencti_description
-  ... on StixFile { name hashes { algorithm hash } }
+  ... on StixFile { name }
+  ... on HashedObservable { hashes { algorithm hash } }
 }
 """
 
@@ -47,8 +49,13 @@ _EXTERNAL_REFERENCES = "externalReferences(first: 10) { edges { node { source_na
 
 LOOKUP_OBSERVABLE = (
     """
-query LookupObservable($filters: FilterGroup!, $types: [String], $first: Int!, $nInd: Int!) {
-  stixCyberObservables(filters: $filters, types: $types, first: $first, orderBy: updated_at, orderMode: desc) {
+query LookupObservable(
+  $filters: FilterGroup, $search: String, $types: [String], $first: Int!, $nInd: Int!,
+  $orderBy: StixCyberObservablesOrdering
+) {
+  stixCyberObservables(
+    filters: $filters, search: $search, types: $types, first: $first, orderBy: $orderBy, orderMode: desc
+  ) {
     pageInfo { globalCount hasNextPage endCursor }
     edges { node {
       ...Obs
@@ -136,11 +143,15 @@ query ObservableRelations($id: String!, $first: Int!) {{
           ... on BasicObject {{ id entity_type }}
           ... on StixObject {{ representative {{ main }} }}
           ... on StixCoreObject {{ {MARKINGS} }}
+          ... on StixCoreRelationship {{ {MARKINGS} }}
+          ... on StixSightingRelationship {{ {MARKINGS} }}
         }}
         to {{
           ... on BasicObject {{ id entity_type }}
           ... on StixObject {{ representative {{ main }} }}
           ... on StixCoreObject {{ {MARKINGS} }}
+          ... on StixCoreRelationship {{ {MARKINGS} }}
+          ... on StixSightingRelationship {{ {MARKINGS} }}
         }}
       }} }}
     }}

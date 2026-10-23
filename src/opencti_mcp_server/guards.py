@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from mcp.server.mcpserver.exceptions import ToolError
+
+from opencti_mcp_server.output import invisible
 
 # --- errors -------------------------------------------------------------------------------------
 
@@ -20,23 +23,59 @@ def bad_request(message: str) -> ToolError:
     return ToolError(f"bad request: {message}")
 
 
+# --- loose argument types -----------------------------------------------------------------------
+# Tool arguments are declared loosely (the JSON schema still says string / integer / boolean), so a
+# wrong type reaches these checks and comes back as `bad request:` rather than a schema error.
+
+
+def as_str(value: Any, name: str) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    raise bad_request(f"{name} must be a string")
+
+
+def as_int(value: Any, name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d{1,9}\s*", value):
+        return int(value)
+    raise bad_request(f"{name} must be an integer")
+
+
+def as_bool(value: Any, name: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    raise bad_request(f"{name} must be true or false")
+
+
 # --- ids, cursors, search text ------------------------------------------------------------------
 
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _ID = re.compile(rf"^(?:[a-z][a-z0-9-]{{0,62}}--)?{_UUID}$", re.IGNORECASE)
 _CURSOR = re.compile(r"^[A-Za-z0-9+/=_-]{1,512}$")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]")
+
+# OpenCTI's keyword sub-fields have `ignore_above: 512`: a longer value is not indexed for exact
+# matching, so `eq` / `contains` on it silently match nothing.
+EXACT_MATCH_MAX = 512
+FUZZY_LABEL = "fuzzy (value longer than OpenCTI's 512-character exact-match limit)"
 
 
-def check_id(value: str) -> str:
+def check_id(value: Any) -> str:
     """An OpenCTI internal id (a UUID) or a STIX id (`<type>--<uuid>`)."""
-    value = (value or "").strip()
+    value = (as_str(value, "id") or "").strip()
     if not _ID.fullmatch(value):
         raise bad_request("id must be a UUID or a STIX id such as 'indicator--<uuid>'")
     return value.lower()
 
 
-def check_cursor(value: str | None) -> str | None:
+def check_cursor(value: Any) -> str | None:
+    value = as_str(value, "after")
     if value is None or value == "":
         return None
     if not _CURSOR.fullmatch(value):
@@ -44,23 +83,51 @@ def check_cursor(value: str | None) -> str | None:
     return value
 
 
-def check_text(value: str | None, name: str, max_len: int) -> str | None:
-    """Free text from the caller: no control or zero-width characters, bounded length."""
+def check_text(value: Any, name: str, max_len: int) -> str | None:
+    """Free text from the caller: no control, format, private-use, unassigned or invisible
+    characters (the set `output.clean` strips, plus newlines and tabs), bounded length."""
+    value = as_str(value, name)
     if value is None:
         return None
     value = value.strip()
     if not value:
         return None
-    if _CONTROL.search(value):
+    if any(ch in "\n\t\u2028\u2029" or invisible(ch) for ch in value):
         raise bad_request(f"{name} contains control or zero-width characters")
     if len(value) > max_len:
         raise bad_request(f"{name} is longer than {max_len} characters")
     return value
 
 
-def check_first(first: int, max_first: int) -> int:
-    if first < 1 or first > max_first:
-        raise bad_request(f"first must be between 1 and {max_first}")
+def check_search(value: Any, max_len: int) -> str | None:
+    """OpenCTI keyword search. `~` (fuzzy) and a leading `*` are refused: they turn a lookup into an
+    expensive, loosely matching query."""
+    value = check_text(value, "search", max_len)
+    if value is None:
+        return None
+    if "~" in value:
+        raise bad_request("search must not contain '~' (fuzzy matching is not allowed)")
+    if value.startswith("*"):
+        raise bad_request("search must not start with '*'")
+    return value
+
+
+def check_value(value: Any, name: str = "value") -> str | None:
+    value = check_text(value, name, MAX_VALUE_LEN)
+    if value is not None and value[0] in "*~":
+        raise bad_request(f"{name} must not start with '*' or '~'")
+    return value
+
+
+def fuzzy_text(value: str) -> str:
+    """A long value as plain search text: OpenCTI's search syntax characters become spaces."""
+    return re.sub(r"\s+", " ", re.sub(r'[~*?"\\]', " ", value)).strip()
+
+
+def check_first(first: Any, max_first: int, name: str = "first") -> int:
+    first = as_int(first, name)
+    if first is None or first < 1 or first > max_first:
+        raise bad_request(f"{name} must be between 1 and {max_first}")
     return first
 
 
@@ -70,12 +137,13 @@ ObservableKind = Literal[
     "md5", "sha1", "sha256", "sha512", "ipv4", "ipv6", "domain", "hostname", "url", "email"
 ]
 
+_HASHED = ["StixFile", "Artifact", "X509-Certificate"]
 # kind -> (OpenCTI observable types, filter key)
 _KINDS: dict[str, tuple[list[str], str]] = {
-    "md5": (["StixFile"], "hashes.MD5"),
-    "sha1": (["StixFile"], "hashes.SHA-1"),
-    "sha256": (["StixFile"], "hashes.SHA-256"),
-    "sha512": (["StixFile"], "hashes.SHA-512"),
+    "md5": (_HASHED, "hashes.MD5"),
+    "sha1": (_HASHED, "hashes.SHA-1"),
+    "sha256": (_HASHED, "hashes.SHA-256"),
+    "sha512": (_HASHED, "hashes.SHA-512"),
     "ipv4": (["IPv4-Addr"], "value"),
     "ipv6": (["IPv6-Addr"], "value"),
     "domain": (["Domain-Name"], "value"),
@@ -130,13 +198,28 @@ def _valid_for(kind: str, value: str) -> bool:
     return False
 
 
-def observable_lookup(value: str, kind: str | None) -> tuple[str, str, list[str], dict[str, Any]]:
+@dataclass(frozen=True)
+class Lookup:
+    kind: str
+    value: str
+    types: list[str]
+    filters: dict[str, Any] | None  # exact match
+    search: str | None  # fuzzy fallback for values over EXACT_MATCH_MAX
+
+    @property
+    def fuzzy(self) -> bool:
+        return self.search is not None
+
+
+def observable_lookup(value: Any, kind: Any) -> Lookup:
     """Validate a value to look up and build its exact-match filter.
 
-    Returns (kind, normalised value, observable types, FilterGroup). Domains also match Hostname
-    observables when the type was auto-detected.
+    Domains also match Hostname observables when the type was auto-detected; hashes match files,
+    artifacts and X.509 certificates. IP addresses are canonicalised (IPv6 compressed). A value
+    longer than OpenCTI's exact-match limit falls back to a fuzzy search.
     """
-    value = check_text(value, "value", MAX_VALUE_LEN)
+    value = check_value(value)
+    kind = as_str(kind, "type")
     if value is None:
         raise bad_request("value is required")
     detected = kind is None
@@ -150,10 +233,14 @@ def observable_lookup(value: str, kind: str | None) -> tuple[str, str, list[str]
         value = value.rstrip(".").lower()
     elif kind in ("md5", "sha1", "sha256", "sha512"):
         value = value.lower()
+    elif kind in ("ipv4", "ipv6"):
+        value = ipaddress.ip_address(value).compressed
     types, key = _KINDS[kind]
     if detected and kind == "domain":
         types = ["Domain-Name", "Hostname"]
-    return kind, value, list(types), filter_group([eq(key, value)])
+    if len(value) > EXACT_MATCH_MAX:
+        return Lookup(kind, value, list(types), None, fuzzy_text(value))
+    return Lookup(kind, value, list(types), filter_group([eq(key, value)]), None)
 
 
 # --- FilterGroup builders (one key per filter, values only) -------------------------------------
@@ -216,9 +303,9 @@ PATTERN_TYPES = frozenset(PatternType.__args__)
 def indicator_filters(
     *,
     value: str | None,
-    min_score: int | None,
-    observable_type: str | None,
-    pattern_type: str | None,
+    min_score: Any,
+    observable_type: Any,
+    pattern_type: Any,
     include_revoked: bool,
 ) -> dict[str, Any] | None:
     """FilterGroup for search_indicators.
@@ -226,6 +313,9 @@ def indicator_filters(
     `value` is an exact, case-insensitive match: the indicator's name equals it, or its pattern
     holds it as a quoted literal (so 'evil.com' does not match 'notevil.com').
     """
+    min_score = as_int(min_score, "min_score")
+    observable_type = as_str(observable_type, "observable_type")
+    pattern_type = as_str(pattern_type, "pattern_type")
     filters: list[dict[str, Any]] = []
     groups: list[dict[str, Any]] = []
     if value is not None:
@@ -266,7 +356,7 @@ def indicator_filters(
 
 # --- TLP guard ----------------------------------------------------------------------------------
 
-# Standard TLP 2.0 names (and TLP 1.0's WHITE) with the order OpenCTI gives them by default.
+# Standard TLP 2.0 names (and TLP 1.0's WHITE) and their rank, the order OpenCTI gives them.
 TLP_ORDER = {
     "TLP:CLEAR": 1,
     "TLP:WHITE": 1,
@@ -277,54 +367,92 @@ TLP_ORDER = {
 }
 
 
+def _squash(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def tlp_name(value: Any) -> str:
+    """Normalise a TLP name: whitespace removed, upper-cased, `TLP:` added if missing."""
+    name = _squash(value)
+    return name if name.startswith("TLP:") else f"TLP:{name}"
+
+
 def normalize_tlp(value: str) -> str:
-    name = value.strip().upper()
-    if not name.startswith("TLP:"):
-        name = f"TLP:{name}"
+    name = tlp_name(value)
     if name not in TLP_ORDER:
         raise ValueError(f"OPENCTI_MAX_TLP must be one of {', '.join(TLP_ORDER)}")
     return name
 
 
+def parse_extra_tlp(value: str) -> dict[str, int]:
+    """`OPENCTI_EXTRA_TLP`: comma-separated `NAME:rank`, e.g. `TLP:EX:CHR:3,TLP:AMBER-NL:3`."""
+    extra: dict[str, int] = {}
+    for item in (value or "").split(","):
+        if not item.strip():
+            continue
+        name, sep, rank = item.strip().rpartition(":")
+        if not sep or not name or not rank.strip().isdigit():
+            raise ValueError(f"OPENCTI_EXTRA_TLP entry {item.strip()!r} is not NAME:rank")
+        norm = tlp_name(name)
+        if norm in TLP_ORDER:
+            raise ValueError(f"OPENCTI_EXTRA_TLP cannot redefine the standard marking {norm}")
+        if not 0 <= int(rank) <= 100:
+            raise ValueError("OPENCTI_EXTRA_TLP ranks must be between 0 and 100")
+        extra[norm] = int(rank)
+    return extra
+
+
+def is_tlp(marking: dict[str, Any]) -> bool:
+    """A marking is TLP if its definition_type says so (any case or spelling: `TLP`, `tlp`,
+    `TLPv2`, `TLP 2.0`) or its definition starts with `TLP:`. A definition starting with `PAP:` is
+    PAP, never TLP; PAP orders overlap TLP's."""
+    definition = _squash(marking.get("definition"))
+    if definition.startswith("PAP:"):
+        return False
+    kind = re.sub(r"[^A-Z0-9]", "", _squash(marking.get("definition_type")))
+    return kind.startswith("TLP") or definition.startswith("TLP:")
+
+
 class TlpGuard:
     """Withholds objects marked above a TLP ceiling.
 
-    Only markings whose `definition_type` is TLP count; PAP and statement markings share order
-    numbers with TLP and are ignored. A TLP marking's rank is the higher of its `x_opencti_order`
-    and its standard name's rank, so a renamed or reordered marking cannot slip under the ceiling.
-    A TLP marking with neither a known name nor an order is treated as above the ceiling (fail
-    closed). Unmarked objects are visible.
+    A TLP marking is ranked by its normalised name only: the standard names, plus any the operator
+    adds with OPENCTI_EXTRA_TLP. A TLP marking with any other name is withheld whatever its
+    `x_opencti_order` (OpenCTI gives imported custom markings order 0). PAP and statement markings
+    are ignored. Every document requests `objectMarking`, so a node without the key, a non-object
+    node or a non-object marking is withheld (fail closed). Unmarked objects are visible.
     """
 
-    def __init__(self, ceiling: str) -> None:
+    def __init__(self, ceiling: str, extra: dict[str, int] | None = None) -> None:
         self.ceiling_name = normalize_tlp(ceiling)
         self.ceiling = TLP_ORDER[self.ceiling_name]
+        self.ranks = {**(extra or {}), **TLP_ORDER}
 
     def allows(self, node: Any) -> bool:
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or "objectMarking" not in node:
+            return False
+        markings = node["objectMarking"]
+        if markings is None:
             return True
-        for marking in node.get("objectMarking") or []:
+        if not isinstance(markings, list):
+            return False
+        for marking in markings:
             if not isinstance(marking, dict):
                 return False
-            if str(marking.get("definition_type") or "").strip().upper() != "TLP":
+            if not is_tlp(marking):
                 continue
-            ranks = []
-            by_name = TLP_ORDER.get(str(marking.get("definition") or "").strip().upper())
-            if by_name is not None:
-                ranks.append(by_name)
-            order = marking.get("x_opencti_order")
-            if isinstance(order, int) and not isinstance(order, bool):
-                ranks.append(order)
-            if not ranks or max(ranks) > self.ceiling:
+            rank = self.ranks.get(tlp_name(marking.get("definition")))
+            if rank is None or rank > self.ceiling:
                 return False
         return True
 
 
 class Withheld:
-    """Counts nodes the TLP guard drops in one tool call."""
+    """Counts the nodes the TLP guard drops in one tool call."""
 
-    def __init__(self, guard: TlpGuard) -> None:
+    def __init__(self, guard: TlpGuard, hide_counts: bool = False) -> None:
         self.guard = guard
+        self.hide_counts = hide_counts
         self.count = 0
 
     def allows(self, node: Any) -> bool:
@@ -335,3 +463,20 @@ class Withheld:
 
     def keep(self, nodes: list[Any]) -> list[Any]:
         return [n for n in nodes if self.allows(n)]
+
+    def total(self, platform_total: int | None, fetched: int, kept: int) -> int | None:
+        """The total to report. With hidden counts it must exclude withheld items, which is only
+        computable when the page holds every item; otherwise it is omitted."""
+        if not self.hide_counts:
+            return platform_total
+        if platform_total is not None and fetched >= platform_total:
+            return kept
+        return None
+
+    def fields(self) -> dict[str, Any]:
+        if self.hide_counts:
+            return {}
+        out: dict[str, Any] = {"withheld": self.count}
+        if self.count:
+            out["withheld_reason"] = f"marked above {self.guard.ceiling_name}"
+        return out

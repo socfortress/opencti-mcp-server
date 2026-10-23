@@ -22,6 +22,8 @@ def main() -> None:
 
     if not settings.opencti_token.get_secret_value():
         raise SystemExit("OPENCTI_TOKEN is required")
+    if warning := settings.cleartext_warning():
+        logging.getLogger("opencti_mcp_server").warning(warning)
 
     if args.transport == "stdio":
         from opencti_mcp_server.server import build_server
