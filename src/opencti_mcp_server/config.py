@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import ipaddress
+import os
+from collections.abc import Iterable
 from functools import lru_cache
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
+from dotenv import dotenv_values
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,6 +18,8 @@ from opencti_mcp_server.guards import normalize_tlp, parse_extra_tlp
 
 
 class Settings(BaseSettings):
+    """Every setting is read from its upper-case name only (see `__init__`)."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # OpenCTI. Use a read-only service account; see README "OpenCTI service account".
@@ -65,6 +72,18 @@ class Settings(BaseSettings):
             raise ValueError("OPENCTI_URL must start with http:// or https://")
         return value
 
+    def __init__(self, **values: Any) -> None:
+        # pydantic-settings matches names case-insensitively, so `opencti_max_tlp` in an env file
+        # would beat a deployment's forced `OPENCTI_MAX_TLP` (Compose overrides identical keys only).
+        env_file = values.get("_env_file", self.model_config.get("env_file"))
+        names = list(os.environ)
+        if env_file and Path(env_file).is_file():
+            names += list(dotenv_values(env_file))
+        bad = miscased_names(names)
+        if bad:
+            raise ValueError(f"settings must be upper case, refusing: {', '.join(bad)}")
+        super().__init__(**values)
+
     @property
     def extra_tlp(self) -> dict[str, int]:
         return parse_extra_tlp(self.opencti_extra_tlp)
@@ -89,6 +108,12 @@ class Settings(BaseSettings):
     @property
     def graphql_url(self) -> str:
         return self.opencti_url if self.opencti_url.endswith("/graphql") else f"{self.opencti_url}/graphql"
+
+
+def miscased_names(names: Iterable[str]) -> list[str]:
+    """Names that spell a setting in anything but upper case, e.g. `opencti_max_tlp`."""
+    fields = {name.upper() for name in Settings.model_fields}
+    return sorted({n for n in names if n.upper() in fields and n != n.upper()})
 
 
 @lru_cache

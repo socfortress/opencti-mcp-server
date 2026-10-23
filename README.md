@@ -206,6 +206,9 @@ async with opencti:
 
 ## Configuration
 
+Names are upper case. The server refuses to start when the environment or `.env` spells a setting in
+any other case (`opencti_max_tlp`), so a lower-case copy can't override a value a deployment forces.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENCTI_URL` | `http://localhost:8080` | OpenCTI base URL (`/graphql` is appended) |

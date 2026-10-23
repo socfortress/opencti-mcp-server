@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   pycti and no raw-GraphQL tool). Tools: `lookup_observable`, `search_indicators`,
   `get_indicator`, `get_observable` (optionally with relationships) and `observable_indicators`,
   all annotated read-only.
+- Settings are read from their upper-case names only: the server refuses to start when the
+  environment or `.env` spells a setting in any other case (`opencti_max_tlp`), which would otherwise
+  override a deployment's forced value, since Compose overrides identical keys only.
 - Guards in the server itself:
   - caller values only ever travel as GraphQL variables, in FilterGroup filters with one key each;
   - exact lookups on `value` and `hashes.<alg>` (case-insensitive `eq`); `search` is fuzzy
