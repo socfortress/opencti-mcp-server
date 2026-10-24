@@ -5,18 +5,28 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Container images are published to
 `ghcr.io/socfortress/opencti-mcp-server` with matching tags.
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-10-24
+
+The two changes below merged after the `v0.1.0` tag was cut, so the 0.1.0 image doesn't have them.
+talon-analyst needs 0.1.1.
+
+### Added
+- `created_by_markings` in every result: the author's own markings beside `created_by`, since an
+  author can be marked higher than the object it wrote (an AMBER-marked author of a CLEAR
+  indicator).
+
+### Changed
+- Settings are read from their upper-case names only: the server refuses to start when the
+  environment or `.env` spells a setting in any other case (`opencti_max_tlp`), which would otherwise
+  override a deployment's forced value, since Compose overrides identical keys only.
+
+## [0.1.0] - 2026-10-24
 
 ### Added
 - Read-only MCP server for OpenCTI, built on plain async httpx with fixed GraphQL documents (no
   pycti and no raw-GraphQL tool). Tools: `lookup_observable`, `search_indicators`,
   `get_indicator`, `get_observable` (optionally with relationships) and `observable_indicators`,
   all annotated read-only.
-- Settings are read from their upper-case names only: the server refuses to start when the
-  environment or `.env` spells a setting in any other case (`opencti_max_tlp`), which would otherwise
-  override a deployment's forced value, since Compose overrides identical keys only.
-- `created_by_markings`: the author's own markings beside `created_by`, since an author can be marked
-  higher than the object it wrote (an AMBER-marked author of a CLEAR indicator).
 - Guards in the server itself:
   - caller values only ever travel as GraphQL variables, in FilterGroup filters with one key each;
   - exact lookups on `value` and `hashes.<alg>` (case-insensitive `eq`); `search` is fuzzy

@@ -856,7 +856,7 @@ async def test_http_requires_bearer(octi):
     octi.responses["Health"] = {"data": {"about": {"version": "6.9.29"}, "me": {"name": "svc-talon"}}}
     app = srv.build_http_app(settings())
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        assert (await c.get("/healthz")).json() == {"status": "ok", "version": "0.1.0"}
+        assert (await c.get("/healthz")).json() == {"status": "ok", "version": "0.1.1"}
         assert (await c.post("/mcp", json={})).status_code == 401
         assert (await c.post("/mcp", json={}, headers={"Authorization": "Bearer wrong"})).status_code == 401
         assert (
@@ -870,7 +870,7 @@ async def test_http_requires_bearer(octi):
         assert ready.status_code == 200
         assert ready.json() == {
             "status": "ok",
-            "version": "0.1.0",
+            "version": "0.1.1",
             "opencti_version": "6.9.29",
             "authenticated": True,
         }
