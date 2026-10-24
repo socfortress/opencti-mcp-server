@@ -190,7 +190,7 @@ linux/amd64 and linux/arm64 with SBOM and provenance, by `.github/workflows/publ
 
 Health:
 
-- `GET /healthz`: open, shallow (`{"status":"ok","version":"0.1.0"}`), for container healthchecks.
+- `GET /healthz`: open, shallow (`{"status":"ok","version":"0.1.1"}`), for container healthchecks.
 - `GET /readyz`: behind the bearer token. Runs `query { about { version } me { name } }` and returns
   `{"status":"ok","opencti_version":"…","authenticated":true}`, or 503 with the error. The user's name and
   capabilities are not returned.
