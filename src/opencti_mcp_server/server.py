@@ -159,7 +159,8 @@ def _meta(node: dict[str, Any], w: Withheld) -> dict[str, Any]:
     labels, labels_total = capped(labels, LABELS_MAX)
     author = node.get("createdBy")
     # The author is an Identity with markings of its own; drop it when it is above the ceiling.
-    created_by = clean(author.get("name")) if isinstance(author, dict) and w.guard.allows(author) else None
+    shown = isinstance(author, dict) and w.guard.allows(author)
+    created_by = clean(author.get("name")) if shown else None
     return {
         "id": node.get("id"),
         "standard_id": node.get("standard_id"),
@@ -168,6 +169,9 @@ def _meta(node: dict[str, Any], w: Withheld) -> dict[str, Any]:
         "labels": labels,
         "labels_total": labels_total,
         "created_by": created_by,
+        # The author's own markings, which can differ from the object's (an AMBER-marked author of a
+        # CLEAR indicator), so a client can apply its own sharing rule to the name.
+        "created_by_markings": _markings(author) if shown and created_by else None,
         "created_at": node.get("created_at"),
         "updated_at": node.get("updated_at"),
     }
@@ -205,6 +209,7 @@ def _indicator(node: dict[str, Any], w: Withheld, *, compact: bool = False) -> d
         "labels": meta["labels"],
         "labels_total": meta["labels_total"],
         "created_by": meta["created_by"],
+        "created_by_markings": meta["created_by_markings"],
         "created_at": meta["created_at"],
         "updated_at": meta["updated_at"],
     }
@@ -245,6 +250,7 @@ def _observable(node: dict[str, Any], w: Withheld) -> dict[str, Any]:
         "labels": meta["labels"],
         "labels_total": meta["labels_total"],
         "created_by": meta["created_by"],
+        "created_by_markings": meta["created_by_markings"],
         "created_at": meta["created_at"],
         "updated_at": meta["updated_at"],
     }

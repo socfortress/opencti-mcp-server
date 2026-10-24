@@ -49,7 +49,7 @@ count, before the TLP filter), `returned` and `has_more`. Example, with syntheti
 {"query":{"value":"malicious.example.com","type":"domain","observable_types":["Domain-Name","Hostname"]},
  "match":"exact","total":1,"returned":1,"withheld":1,"withheld_reason":"marked above TLP:AMBER+STRICT","has_more":false,
  "observables":[{"id":"…","standard_id":"domain-name--…","type":"Domain-Name","value":"malicious.example.com",
-   "score":70,"markings":["TLP:CLEAR"],"labels":["phishing"],"created_by":"Example Feed","updated_at":"…",
+   "score":70,"markings":["TLP:CLEAR"],"labels":["phishing"],"created_by":"Example Feed","created_by_markings":[],"updated_at":"…",
    "indicators":[{"id":"…","name":"malicious.example.com","pattern":"[domain-name:value = 'malicious.example.com']",
      "pattern_type":"stix","score":80,"detection":true,"revoked":false,"valid_until":"…","markings":["TLP:CLEAR"]}],
    "indicators_total":2,
@@ -78,7 +78,8 @@ above the ceiling. A requested object that is itself above the ceiling comes bac
   `OPENCTI_EXTRA_TLP=TLP:EX:CHR:3,TLP:AMBER-NL:3` (comma-separated `NAME:rank`; standard names cannot be
   redefined).
 - Authors count too: when an object's author (`createdBy`) is marked above the ceiling, `created_by` is
-  dropped.
+  dropped. Otherwise `created_by_markings` carries the author's own markings, which can be higher than
+  the object's (an AMBER-marked author of a CLEAR indicator).
 - Every document requests `objectMarking`, so a node without the key (or a relationship end the account
   cannot see) is withheld: the guard fails closed. Unmarked objects are visible.
 
@@ -205,6 +206,9 @@ async with opencti:
 ```
 
 ## Configuration
+
+Names are upper case. The server refuses to start when the environment or `.env` spells a setting in
+any other case (`opencti_max_tlp`), so a lower-case copy can't override a value a deployment forces.
 
 | Variable | Default | Purpose |
 |---|---|---|

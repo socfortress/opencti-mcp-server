@@ -72,6 +72,22 @@ def test_settings_reject_unknown_tlp(bad):
         settings(opencti_max_tlp=bad)
 
 
+@pytest.mark.parametrize("name", ["opencti_max_tlp", "Opencti_Hide_Withheld_Counts", "mcp_auth_token"])
+def test_settings_refuse_a_miscased_environment_name(monkeypatch, name):
+    monkeypatch.setenv(name, "x")
+    with pytest.raises(ValueError, match=name):
+        Settings(_env_file=None)
+
+
+def test_settings_refuse_a_miscased_name_in_the_env_file(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("OPENCTI_MAX_TLP=TLP:AMBER\nopencti_max_tlp=TLP:RED\n")
+    with pytest.raises(ValueError, match="opencti_max_tlp"):
+        Settings(_env_file=env)
+    env.write_text("OPENCTI_MAX_TLP=TLP:GREEN\n")
+    assert Settings(_env_file=env).opencti_max_tlp == "TLP:GREEN"
+
+
 def test_settings_never_show_the_token():
     s = settings()
     assert TOKEN not in repr(s) and TOKEN not in str(s) and TOKEN not in s.model_dump_json()
@@ -1013,6 +1029,18 @@ async def test_author_above_the_ceiling_is_dropped(octi, mcp):
     out = await call(mcp, "search_indicators", {"search": "x"})
     assert [i.get("created_by") for i in out["indicators"]] == [None, None, "Example Feed"]
     assert "Secret Source" not in json.dumps(out) and out["withheld"] == 0
+    assert [i.get("created_by_markings") for i in out["indicators"]] == [None, None, []]
+
+
+async def test_the_authors_own_markings_are_returned(octi, mcp):
+    from fakes import MARKINGS
+
+    amber_author = indicator(createdBy={"name": "Partner Feed", "objectMarking": [MARKINGS["TLP:AMBER"]]})
+    octi.responses["SearchIndicators"] = {"data": {"indicators": conn([amber_author])}}
+    out = await call(mcp, "search_indicators", {"search": "x"})
+    (ind,) = out["indicators"]
+    assert ind["created_by"] == "Partner Feed" and ind["created_by_markings"] == ["TLP:AMBER"]
+    assert ind["markings"] == ["TLP:CLEAR"]
 
 
 async def test_relations_with_missing_or_unmarked_ends_are_withheld(octi, mcp):
